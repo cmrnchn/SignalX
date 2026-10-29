@@ -492,6 +492,9 @@ export const api = {
     }),
   getPendingReplies: (threadId: string) =>
     call<PendingReply[]>("cmd_get_pending_replies", { threadId }),
+  getAllPendingReplies: () => call<PendingReply[]>("cmd_get_all_pending_replies"),
+  markPendingReplyConsumed: (threadId: string, messageId: string) =>
+    call<{ consumed: boolean }>("cmd_mark_pending_reply_consumed", { threadId, messageId }),
   exportThread: (threadId: string, format = "json") =>
     call<unknown>("cmd_export_thread", {
       threadId,

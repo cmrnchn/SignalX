@@ -1,4 +1,4 @@
-import type { Dispatch, MouseEvent, SetStateAction } from "react";
+import type { Dispatch, MouseEvent, ReactNode, SetStateAction } from "react";
 import type { ContactMeta, Customer, GroupMeta, ThreadSummary } from "../../api";
 import { avatarTint, fmtTime, initials, threadTitle } from "../../format";
 import { IconCompose } from "../../navIcons";
@@ -28,6 +28,14 @@ type Props = {
   onStartNewDm: () => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: MouseEvent, id: string) => void;
+  /** Drafts + queued/failed sends; drives the chip badge. */
+  needsReviewCount: number;
+  needsReviewActive: boolean;
+  onToggleNeedsReview: () => void;
+  /** Rendered in place of the thread rows while Needs review is active. */
+  needsReviewList: ReactNode;
+  /** Thread ids with an unreviewed AI draft, for the per-row badge. */
+  draftThreadIds: Set<string>;
 };
 
 /** Messages column: new-DM strip, filter chips, and the thread rows. */
@@ -48,6 +56,11 @@ export function ThreadList({
   onStartNewDm,
   onSelectThread,
   onThreadContextMenu,
+  needsReviewCount,
+  needsReviewActive,
+  onToggleNeedsReview,
+  needsReviewList,
+  draftThreadIds,
 }: Props) {
   return (
     <section className="thread-col">
@@ -109,11 +122,24 @@ export function ThreadList({
           >
             Pending
           </button>
+          <span className="chip-sep" aria-hidden />
+          <button
+            type="button"
+            className={needsReviewActive ? "chip active" : "chip"}
+            aria-pressed={needsReviewActive}
+            onClick={onToggleNeedsReview}
+          >
+            Needs review
+            {needsReviewCount > 0 && <span className="chip-badge">{needsReviewCount}</span>}
+          </button>
           <span className="chip-count">
-            {filteredThreads.length}/{threads.length}
+            {needsReviewActive ? `${needsReviewCount} open` : `${filteredThreads.length}/${threads.length}`}
           </span>
         </div>
       </div>
+      {needsReviewActive ? (
+        needsReviewList
+      ) : (
       <div className="thread-list">
         {threads.length === 0 && (
           <p className="empty">No threads yet — open a chat above or wait for Signal traffic.</p>
@@ -147,12 +173,14 @@ export function ThreadList({
                   )}
                   {t.unread_count > 0 && <span className="badge">{t.unread_count}</span>}
                   {t.outbox_count > 0 && <span className="badge muted">{t.outbox_count} pending</span>}
+                  {draftThreadIds.has(t.id) && <span className="badge muted">AI draft</span>}
                 </div>
               </div>
             </button>
           );
         })}
       </div>
+      )}
     </section>
   );
 }
