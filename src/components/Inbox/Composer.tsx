@@ -1,3 +1,4 @@
+import type { PendingReply } from "../../api";
 import { IconImage } from "../../navIcons";
 
 type Props = {
@@ -11,6 +12,11 @@ type Props = {
   /** Blocks sending entirely, e.g. while a daemon restart is pending. */
   blocked: boolean;
   onSend: () => void;
+  /** Unreviewed AI drafts for this thread, shown as review cards above the input. */
+  drafts: PendingReply[];
+  onApproveDraft: (p: PendingReply) => void;
+  onEditDraft: (p: PendingReply) => void;
+  onDiscardDraft: (p: PendingReply) => void;
 };
 
 /** Message input with an optional single attachment. Enter sends. */
@@ -23,8 +29,37 @@ export function Composer({
   sending,
   blocked,
   onSend,
+  drafts,
+  onApproveDraft,
+  onEditDraft,
+  onDiscardDraft,
 }: Props) {
   return (
+    <>
+    {drafts.map((p) => (
+      <div key={p.message_id} className="summary-box">
+        <div className="summary-head">
+          <strong>AI drafted a reply — review before sending</strong>
+        </div>
+        <p>{p.draft}</p>
+        <div className="row-actions">
+          <button
+            type="button"
+            className="action-btn primary"
+            disabled={sending || blocked}
+            onClick={() => onApproveDraft(p)}
+          >
+            Send
+          </button>
+          <button type="button" className="ghost-btn" onClick={() => onEditDraft(p)}>
+            Edit
+          </button>
+          <button type="button" className="ghost-btn" onClick={() => onDiscardDraft(p)}>
+            Discard
+          </button>
+        </div>
+      </div>
+    ))}
     <div className="composer">
       {attachPreview && (
         <div className="attach-chip">
@@ -70,5 +105,6 @@ export function Composer({
         </button>
       </div>
     </div>
+    </>
   );
 }

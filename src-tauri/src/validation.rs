@@ -7,6 +7,7 @@ pub const MAX_PIN_LENGTH: usize = 8;
 pub const MAX_STOCK_QUANTITY: f64 = 1_000_000.0;
 pub const MAX_PRICE_CENTS: i64 = 999_999_999; // $9,999,999.99
 
+#[derive(Debug)]
 pub struct ValidationError(pub String);
 
 impl From<ValidationError> for String {

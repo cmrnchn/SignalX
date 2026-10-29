@@ -102,7 +102,7 @@ type Props = {
   selectedKey: string | null;
   onSelectKey: (key: string | null) => void;
   onOpenChat: (threadId: string) => void;
-  onNavigate: (panel: "orders" | "outbox") => void;
+  onNavigate: (panel: "orders") => void;
   onRefresh: () => void;
   setStatus: (msg: string | null) => void;
   money: (cents: number) => string;

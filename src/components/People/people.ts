@@ -285,7 +285,7 @@ export type PersonAction = {
   label: string;
   detail?: string;
   cta: string;
-  target: "chat" | "orders" | "outbox";
+  target: "chat" | "orders";
   urgent: boolean;
   why: string;
 };
@@ -342,10 +342,10 @@ export function actionsFor(p: Person, money: (c: number) => string): PersonActio
     out.push({
       id: "queued",
       label: `${p.pendingCount} message${p.pendingCount === 1 ? "" : "s"} queued to send`,
-      cta: "Open outbox",
-      target: "outbox",
+      cta: "Open chat",
+      target: "chat",
       urgent: false,
-      why: "Queued or failed sends for this chat, taken from the thread's outbox count.",
+      why: "Queued or failed sends for this chat, taken from the thread's pending-send count.",
     });
   }
 

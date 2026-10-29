@@ -1094,6 +1094,7 @@ mod tests {
       sell_options: vec![],
       low_stock_threshold_milli: 0,
       updated_at: 0,
+      lifecycle: "active".into(),
     }
   }
 
@@ -1125,6 +1126,7 @@ mod tests {
       }],
       low_stock_threshold_milli: 0,
       updated_at: 0,
+      lifecycle: "active".into(),
     }
   }
 
@@ -1195,6 +1197,7 @@ mod tests {
           sell_options: vec![],
           low_stock_threshold_milli: 0,
           updated_at: 0,
+          lifecycle: "active".into(),
         },
         1,
       )
@@ -1231,6 +1234,7 @@ mod tests {
           sell_options: vec![],
           low_stock_threshold_milli: 0,
           updated_at: 0,
+          lifecycle: "active".into(),
         },
         1,
       )
@@ -1280,6 +1284,7 @@ mod tests {
           sell_options: vec![],
           low_stock_threshold_milli: 0,
           updated_at: 0,
+          lifecycle: "active".into(),
         },
         1,
       )
@@ -1308,6 +1313,7 @@ mod tests {
           sell_options: vec![],
           low_stock_threshold_milli: 0,
           updated_at: 0,
+          lifecycle: "active".into(),
         },
         1,
       )

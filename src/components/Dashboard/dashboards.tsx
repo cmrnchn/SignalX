@@ -43,7 +43,7 @@ export function messagesDashboard(
   groups: GroupMeta[],
   actions: {
     openThread: (id: string) => void;
-    goOutbox: () => void;
+    goNeedsReview: () => void;
     goNewMessage: () => void;
   },
 ): DashboardData {
@@ -113,15 +113,15 @@ export function messagesDashboard(
       title: `${outboxSummary.failed} message${outboxSummary.failed === 1 ? "" : "s"} failed to send`,
       body: "Check the connection or the recipient — these will not retry on their own.",
       urgent: true,
-      primary: { label: "Review outbox", onClick: actions.goOutbox },
+      primary: { label: "Review sends", onClick: actions.goNeedsReview },
     });
   } else if (queued > 0) {
     cards.push({
       key: "outbox-queued",
       kicker: "Sending",
-      title: `${queued} message${queued === 1 ? "" : "s"} in the outbox`,
+      title: `${queued} message${queued === 1 ? "" : "s"} waiting to send`,
       body: "Queued or in progress — nothing needs attention unless it stalls.",
-      secondary: { label: "Review outbox", onClick: actions.goOutbox },
+      secondary: { label: "Review sends", onClick: actions.goNeedsReview },
     });
   }
 
@@ -450,7 +450,7 @@ export function peopleDashboard(
       why: a.why,
       urgent: true,
       primary: {
-        label: a.target === "orders" ? "Open orders" : a.target === "outbox" ? "Open outbox" : "Open chat",
+        label: a.target === "orders" ? "Open orders" : "Open chat",
         onClick: () => (a.target === "chat" ? actions.openChat(p.threadId) : actions.openPerson(p.key)),
       },
     });

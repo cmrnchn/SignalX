@@ -838,6 +838,21 @@ impl ThreadState {
     d.pending_replies.get(thread_id).cloned().unwrap_or_else(Vec::new)
   }
 
+  /// All unconsumed AI drafts across every thread, newest first.
+  fn get_all_pending_replies(&self) -> Vec<PendingReply> {
+    let d = self.data.lock().unwrap();
+    let mut all: Vec<PendingReply> = d.pending_replies.values().flatten().cloned().collect();
+    all.sort_by_key(|p| std::cmp::Reverse(p.created_at));
+    all
+  }
+
+  /// A send to the thread answers every draft waiting on it: consume them all
+  /// (moving each to draft history) so they stop piling up unseen.
+  fn consume_all_pending_replies(&self, thread_id: &str) -> usize {
+    let ids: Vec<String> = self.get_pending_replies(thread_id).into_iter().map(|p| p.message_id).collect();
+    ids.iter().filter(|id| self.consume_pending_reply(thread_id, id)).count()
+  }
+
   fn consume_pending_reply(&self, thread_id: &str, message_id: &str) -> bool {
     let (changed, removed, should_remove) = {
       let mut d = self.data.lock().unwrap();
@@ -3089,6 +3104,25 @@ fn get_pending_replies(state: &AppState, thread_id: String) -> Value {
   ok_t(ts.get_pending_replies(thread_id.trim()))
 }
 
+fn get_all_pending_replies(state: &AppState) -> Value {
+  let account = match state.account_manager.get_active() {
+    Some(a) => a,
+    None => return ok_t(Vec::<PendingReply>::new()),
+  };
+  let ts = state.account_manager.get_or_create(&account);
+  ok_t(ts.get_all_pending_replies())
+}
+
+/// After a user-initiated send succeeds, retire the thread's pending AI drafts.
+fn consume_drafts_after_manual_send(state: &AppState, thread_id: &str, result: &Value) {
+  if !result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+    return;
+  }
+  if let Some(account) = state.account_manager.get_active() {
+    state.account_manager.get_or_create(&account).consume_all_pending_replies(thread_id.trim());
+  }
+}
+
 fn get_draft_history(state: &AppState, thread_id: String) -> Value {
   let account = match state.account_manager.get_active() {
     Some(a) => a,
@@ -4633,6 +4667,8 @@ fn trigger_agent_draft(state: AppState, agent: AgentModeConfig, ts: ThreadState,
             );
             let outcome = if queued.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
               state_for_auto.auto_reply.record_send(&tid);
+              // Auto-sent: this draft is no longer awaiting review.
+              ts_for_add.consume_pending_reply(&tid, &mid);
               "sent"
             } else {
               "blocked"
@@ -6502,6 +6538,10 @@ fn cmd_get_pending_replies(state: State<'_, AppState>, thread_id: String) -> Val
   get_pending_replies(&state, thread_id)
 }
 #[tauri::command]
+fn cmd_get_all_pending_replies(state: State<'_, AppState>) -> Value {
+  get_all_pending_replies(&state)
+}
+#[tauri::command]
 fn cmd_get_draft_history(state: State<'_, AppState>, thread_id: String) -> Value {
   get_draft_history(&state, thread_id)
 }
@@ -6520,7 +6560,9 @@ fn cmd_queue_outgoing_message(
   recipient: String,
   content: String,
 ) -> Value {
-  queue_outgoing_message(&state, thread_id, recipient, content)
+  let res = queue_outgoing_message(&state, thread_id.clone(), recipient, content);
+  consume_drafts_after_manual_send(&state, &thread_id, &res);
+  res
 }
 /// Queue text and/or one outbound attachment via the outbox (no bypass send path).
 /// Frontend invoke args: `{ thread_id, recipient, content, attachment_b64, attachment_ext }`
@@ -6534,14 +6576,16 @@ fn cmd_queue_outgoing_with_attachment(
   attachment_b64: String,
   attachment_ext: String,
 ) -> Value {
-  queue_outgoing_with_attachment(
+  let res = queue_outgoing_with_attachment(
     &state,
-    thread_id,
+    thread_id.clone(),
     recipient,
     content,
     attachment_b64,
     attachment_ext,
-  )
+  );
+  consume_drafts_after_manual_send(&state, &thread_id, &res);
+  res
 }
 #[tauri::command]
 fn cmd_retry_outbox_item(state: State<'_, AppState>, id: String) -> Value {
@@ -7254,6 +7298,7 @@ pub fn run() {
       cmd_get_threads,
       cmd_get_thread_messages,
       cmd_get_pending_replies,
+      cmd_get_all_pending_replies,
       cmd_get_draft_history,
       cmd_list_outbox,
       cmd_get_outbox_state_summary,
@@ -7499,6 +7544,53 @@ mod foundation_tests {
     let parsed = parse_thread_actions_json(raw).expect("parse");
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].kind, "summarize");
+  }
+
+  fn pending(thread: &str, mid: &str, created_at: i64) -> PendingReply {
+    PendingReply {
+      message_id: mid.into(),
+      thread_id: thread.into(),
+      draft: format!("draft for {}", mid),
+      intent: "helpful".into(),
+      created_at,
+    }
+  }
+
+  #[test]
+  fn get_all_pending_replies_flattens_and_sorts_newest_first() {
+    let path = std::env::temp_dir().join(format!("signalx-pending-{}.json", Uuid::new_v4()));
+    let ts = ThreadState::new("test-account".to_string(), path.clone());
+    ts.add_pending_reply("thread-a", pending("thread-a", "m1", 100));
+    ts.add_pending_reply("thread-b", pending("thread-b", "m2", 200));
+    let all = ts.get_all_pending_replies();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].message_id, "m2");
+    assert_eq!(all[1].message_id, "m1");
+
+    assert!(ts.consume_pending_reply("thread-b", "m2"));
+    assert_eq!(ts.get_all_pending_replies().len(), 1);
+
+    let _ = std::fs::remove_file(&path);
+  }
+
+  #[test]
+  fn manual_send_consumes_every_pending_draft_for_that_thread_only() {
+    let path = std::env::temp_dir().join(format!("signalx-pending-{}.json", Uuid::new_v4()));
+    let ts = ThreadState::new("test-account".to_string(), path.clone());
+    ts.add_pending_reply("thread-a", pending("thread-a", "m1", 100));
+    ts.add_pending_reply("thread-a", pending("thread-a", "m2", 150));
+    ts.add_pending_reply("thread-b", pending("thread-b", "m3", 200));
+
+    assert_eq!(ts.consume_all_pending_replies("thread-a"), 2);
+    assert!(ts.get_pending_replies("thread-a").is_empty());
+    let left = ts.get_all_pending_replies();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].message_id, "m3");
+    // Consumed drafts move to history rather than vanishing.
+    assert_eq!(ts.get_draft_history("thread-a").len(), 2);
+    assert_eq!(ts.consume_all_pending_replies("thread-a"), 0);
+
+    let _ = std::fs::remove_file(&path);
   }
 
   #[test]

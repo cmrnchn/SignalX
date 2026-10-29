@@ -23,6 +23,7 @@ import {
   type Order,
   type OutboxItem,
   type OutboxSummary,
+  type PendingReply,
   type Product,
   type ReceiveLoopState,
   type SalesSummary,
@@ -55,6 +56,7 @@ import { ProfileRail } from "./ProfileRail";
 import { Composer } from "./components/Inbox/Composer";
 import { ConvoHeader } from "./components/Inbox/ConvoHeader";
 import { MessageList } from "./components/Inbox/MessageList";
+import { NeedsReviewList } from "./components/Inbox/NeedsReviewList";
 import { EMPTY_THREAD_FILTER, ThreadList, type ThreadFilter } from "./components/Inbox/ThreadList";
 import { CatalogScreen } from "./components/Catalog/CatalogScreen";
 import { SearchScreen } from "./components/Search/SearchScreen";
@@ -66,7 +68,6 @@ import { catalogDashboard, homeDashboard, messagesDashboard, ordersDashboard, pe
 import { matchingMessages, matchingOrders, matchingPeople, matchingProducts, type SearchScope } from "./globalSearch";
 import { OrdersScreen, EMPTY_ORDER_FILTER, type OrderFilterState } from "./components/Orders/OrdersScreen";
 import { SalesScreen } from "./components/Sales/SalesScreen";
-import { OutboxScreen } from "./components/Outbox/OutboxScreen";
 import { AccountSettings } from "./components/Settings/AccountSettings";
 import { AutoReplySettings as AutoReplySettingsTab } from "./components/Settings/AutoReplySettings";
 import { BackupSettings } from "./components/Settings/BackupSettings";
@@ -101,7 +102,6 @@ import {
   IconLink,
   IconMessages,
   IconOrders,
-  IconOutbox,
   IconSales,
   IconSearch,
   IconX,
@@ -128,7 +128,6 @@ export type Panel =
   | "customers"
   | "orders"
   | "sales"
-  | "outbox"
   | "audit"
   | "invoice-export"
   | "settings";
@@ -166,10 +165,7 @@ const NAV_GROUPS: NavItem[][] = [
     { id: "sales", label: "Sales", ico: <IconSales /> },
     { id: "invoice-export", label: "Export", ico: <IconExport /> },
   ],
-  [
-    { id: "outbox", label: "Outbox", ico: <IconOutbox /> },
-    { id: "audit", label: "Audit", ico: <IconAudit /> },
-  ],
+  [{ id: "audit", label: "Audit", ico: <IconAudit /> }],
   [{ id: "settings", label: "Settings", ico: <IconSettings /> }],
 ];
 
@@ -325,6 +321,8 @@ export default function App() {
   const [outbox, setOutbox] = useState<OutboxItem[]>([]);
   const [globalOutboxReal, setGlobalOutbox] = useState<OutboxItem[]>([]);
   const [outboxSummary, setOutboxSummary] = useState<OutboxSummary | null>(null);
+  const [pendingDraftsByThread, setPendingDraftsByThread] = useState<Record<string, PendingReply[]>>({});
+  const [needsReviewMode, setNeedsReviewMode] = useState(false);
   const [composer, setComposer] = useState("");
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const [attachPreview, setAttachPreview] = useState<string | null>(null);
@@ -424,6 +422,15 @@ export default function App() {
   })();
   const globalOutbox =
     USE_FIXTURES && !globalOutboxReal.length ? fxOutbox : globalOutboxReal;
+  const allPendingDrafts = useMemo(
+    () =>
+      Object.values(pendingDraftsByThread)
+        .flat()
+        .sort((a, b) => b.created_at - a.created_at),
+    [pendingDraftsByThread],
+  );
+  const draftThreadIds = useMemo(() => new Set(Object.keys(pendingDraftsByThread)), [pendingDraftsByThread]);
+  const needsReviewCount = globalOutbox.length + allPendingDrafts.length;
   const searchHits = searchHitsReal.length
     ? searchHitsReal
     : USE_FIXTURES
@@ -562,6 +569,7 @@ export default function App() {
       await refreshThreads();
       await refreshMeta();
       await refreshGlobalOutbox();
+      await refreshPendingDrafts();
     }
   };
 
@@ -615,8 +623,9 @@ export default function App() {
       );
       unsubs.push(
         await onEvent<{ pending?: { draft: string; thread_id: string } }>("agent://draft", (p) => {
+          // Drafts render as review cards (and in Needs review) instead of silently filling the composer.
+          void refreshPendingDrafts();
           if (p.pending && p.pending.thread_id === selectedRef.current) {
-            setComposer((c) => c || p.pending!.draft);
             setStatus("AI draft ready — review before sending");
           }
         }),
@@ -775,6 +784,8 @@ export default function App() {
     await refreshMessages(selectedId);
     await refreshThreads();
     await refreshGlobalOutbox();
+    // The backend consumed this thread's pending AI drafts on send.
+    await refreshPendingDrafts();
   };
 
   const onRetry = async (id: string) => {
@@ -1575,6 +1586,43 @@ export default function App() {
     if (sum.success) setOutboxSummary(sum.data);
   };
 
+  const refreshPendingDrafts = async () => {
+    const res = await api.getAllPendingReplies();
+    if (!res.success) return;
+    const byThread: Record<string, PendingReply[]> = {};
+    for (const p of res.data) {
+      (byThread[p.thread_id] ??= []).push(p);
+    }
+    setPendingDraftsByThread(byThread);
+  };
+
+  const approveDraft = async (p: PendingReply) => {
+    // Queuing a send consumes the thread's pending drafts server-side.
+    const res = await api.queueMessage(p.thread_id, p.draft);
+    if (!res.success) {
+      setStatus(res.error);
+      return;
+    }
+    await refreshPendingDrafts();
+    await refreshGlobalOutbox();
+    await refreshThreads();
+    if (selectedId === p.thread_id) await refreshMessages(p.thread_id);
+  };
+
+  const editDraft = async (p: PendingReply) => {
+    setSelectedId(p.thread_id);
+    setPanel("threads");
+    setNeedsReviewMode(false);
+    setComposer(p.draft);
+    await api.markPendingReplyConsumed(p.thread_id, p.message_id);
+    await refreshPendingDrafts();
+  };
+
+  const discardDraft = async (p: PendingReply) => {
+    await api.markPendingReplyConsumed(p.thread_id, p.message_id);
+    await refreshPendingDrafts();
+  };
+
   const setOrderLifecycle = async (id: string, status: string) => {
     const res = await api.setOrderStatus(id, status);
     if (!res.success) setStatus(res.error);
@@ -1650,7 +1698,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (panel === "outbox") void refreshGlobalOutbox();
+    if (panel === "threads") {
+      void refreshGlobalOutbox();
+      void refreshPendingDrafts();
+    }
     if (panel === "audit") {
       void api.listAutoReplyAudit(80).then((r) => {
         if (r.success) setAudit(r.data);
@@ -1861,8 +1912,11 @@ export default function App() {
       setStatus("No roster account to unlock");
       return;
     }
+    // PIN-less accounts must unlock with an empty PIN; the backend rejects any other value.
+    const selected = session?.accounts.find((a) => a.id === id);
+    const pin = selected && !selected.has_pin ? "" : sessionPin;
     setRosterBusy(true);
-    const res = await api.unlockAccount(id, sessionPin);
+    const res = await api.unlockAccount(id, pin);
     setRosterBusy(false);
     if (!res.success) {
       setStatus(res.error);
@@ -1979,6 +2033,7 @@ export default function App() {
                   onClick={() => {
                     setUnlockId(a.id);
                     setUnlockError(null);
+                    setSessionPin("");
                   }}
                 >
                   <span className="lock-account-label">{a.label || a.e164 || `…${a.last4}`}</span>
@@ -1989,18 +2044,28 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <label className="field-label" htmlFor="session-pin">
-              PIN
-            </label>
-            <input
-              id="session-pin"
-              type="password"
-              autoComplete="off"
-              placeholder="4–8 digits"
-              value={sessionPin}
-              onChange={(e) => setSessionPin(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void onUnlock()}
-            />
+            {(() => {
+              const selected = session.accounts.find((a) => a.id === unlockId) ?? session.accounts[0];
+              if (selected && !selected.has_pin) {
+                return <p className="hint tight">No PIN set for this account — just press Unlock.</p>;
+              }
+              return (
+                <>
+                  <label className="field-label" htmlFor="session-pin">
+                    PIN
+                  </label>
+                  <input
+                    id="session-pin"
+                    type="password"
+                    autoComplete="off"
+                    placeholder="4–8 digits"
+                    value={sessionPin}
+                    onChange={(e) => setSessionPin(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void onUnlock()}
+                  />
+                </>
+              );
+            })()}
             <button
               type="button"
               className="action-btn primary"
@@ -2146,15 +2211,9 @@ export default function App() {
                   {id === "orders" && orders.length > 0 && (
                     <span className="nav-count">{orders.length}</span>
                   )}
-                  {id === "outbox" &&
-                    outboxSummary &&
-                    outboxSummary.queued + outboxSummary.sending + outboxSummary.failed > 0 && (
-                      <span className="nav-count">
-                        {outboxSummary.failed > 0
-                          ? outboxSummary.failed
-                          : outboxSummary.queued + outboxSummary.sending}
-                      </span>
-                    )}
+                  {id === "threads" && needsReviewCount > 0 && (
+                    <span className="nav-count">{needsReviewCount}</span>
+                  )}
                 </button>
               ))}
             </div>
@@ -2229,6 +2288,29 @@ export default function App() {
               setEditingMenu(menu.id);
             }
           }}
+          needsReviewCount={needsReviewCount}
+          needsReviewActive={needsReviewMode}
+          onToggleNeedsReview={() => setNeedsReviewMode((v) => !v)}
+          draftThreadIds={draftThreadIds}
+          needsReviewList={
+            <NeedsReviewList
+              drafts={allPendingDrafts}
+              outbox={globalOutbox}
+              contacts={contacts}
+              groups={groups}
+              customers={customers}
+              onApproveDraft={(p) => void approveDraft(p)}
+              onEditDraft={(p) => void editDraft(p)}
+              onDiscardDraft={(p) => void discardDraft(p)}
+              onRefresh={refreshGlobalOutbox}
+              onRetryOutbox={onRetry}
+              onDiscardOutbox={onDeleteOutbox}
+              onOpenThread={(threadId) => {
+                setSelectedId(threadId);
+                setPanel("threads");
+              }}
+            />
+          }
         />
       )}
 
@@ -2731,23 +2813,6 @@ export default function App() {
         />
       )}
 
-      {panel === "outbox" && (
-        <OutboxScreen
-          items={globalOutbox}
-          summary={outboxSummary}
-          contacts={contacts}
-          groups={groups}
-          customers={customers}
-          onRefresh={refreshGlobalOutbox}
-          onRetry={onRetry}
-          onDelete={onDeleteOutbox}
-          onOpenThread={(threadId) => {
-            setSelectedId(threadId);
-            setPanel("threads");
-          }}
-        />
-      )}
-
       {panel === "audit" && (
         <AuditScreen
           autoReply={audit}
@@ -2873,8 +2938,7 @@ export default function App() {
         panel === "catalog" ||
         panel === "orders" ||
         panel === "sales" ||
-        panel === "search" ||
-        panel === "outbox") ? null : (
+        panel === "search") ? null : (
       <main className="convo">
         {!selectedId ? (
           <PageDashboard
@@ -2882,7 +2946,10 @@ export default function App() {
               {
                 messages: messagesDashboard(threads, outboxSummary, contacts, groups, {
                   openThread: (id) => setSelectedId(id),
-                  goOutbox: () => setPanel("outbox"),
+                  goNeedsReview: () => {
+                    setPanel("threads");
+                    setNeedsReviewMode(true);
+                  },
                   goNewMessage: () => setNewDmOpen(true),
                 }),
                 catalog: catalogDashboard(products, orders, {
@@ -2991,6 +3058,10 @@ export default function App() {
               sending={sending}
               blocked={restartRequired}
               onSend={() => void onSend()}
+              drafts={pendingDraftsByThread[selectedId] ?? []}
+              onApproveDraft={(p) => void approveDraft(p)}
+              onEditDraft={(p) => void editDraft(p)}
+              onDiscardDraft={(p) => void discardDraft(p)}
             />
           </>
         )}

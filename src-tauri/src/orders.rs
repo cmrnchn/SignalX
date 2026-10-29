@@ -637,6 +637,7 @@ mod tests {
       sell_options: vec![],
       low_stock_threshold_milli: 0,
       updated_at: 0,
+      lifecycle: "active".into(),
     };
     let commerce_a = CommerceStore::new(&dir_a);
     commerce_a.upsert_product(product(5000), 1).unwrap();
@@ -693,6 +694,7 @@ mod tests {
           sell_options: vec![],
           low_stock_threshold_milli: 0,
           updated_at: 0,
+          lifecycle: "active".into(),
         },
         1,
       )
