@@ -68,7 +68,6 @@ import { catalogDashboard, homeDashboard, messagesDashboard, ordersDashboard, pe
 import { matchingMessages, matchingOrders, matchingPeople, matchingProducts, type SearchScope } from "./globalSearch";
 import { OrdersScreen, EMPTY_ORDER_FILTER, type OrderFilterState } from "./components/Orders/OrdersScreen";
 import { SalesScreen } from "./components/Sales/SalesScreen";
-import { OutboxScreen } from "./components/Outbox/OutboxScreen";
 import { AccountSettings } from "./components/Settings/AccountSettings";
 import { AutoReplySettings as AutoReplySettingsTab } from "./components/Settings/AutoReplySettings";
 import { BackupSettings } from "./components/Settings/BackupSettings";
@@ -103,7 +102,6 @@ import {
   IconLink,
   IconMessages,
   IconOrders,
-  IconOutbox,
   IconSales,
   IconSearch,
   IconX,
@@ -130,7 +128,6 @@ export type Panel =
   | "customers"
   | "orders"
   | "sales"
-  | "outbox"
   | "audit"
   | "invoice-export"
   | "settings";
@@ -168,10 +165,7 @@ const NAV_GROUPS: NavItem[][] = [
     { id: "sales", label: "Sales", ico: <IconSales /> },
     { id: "invoice-export", label: "Export", ico: <IconExport /> },
   ],
-  [
-    { id: "outbox", label: "Outbox", ico: <IconOutbox /> },
-    { id: "audit", label: "Audit", ico: <IconAudit /> },
-  ],
+  [{ id: "audit", label: "Audit", ico: <IconAudit /> }],
   [{ id: "settings", label: "Settings", ico: <IconSettings /> }],
 ];
 
@@ -1704,7 +1698,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (panel === "outbox") void refreshGlobalOutbox();
     if (panel === "threads") {
       void refreshGlobalOutbox();
       void refreshPendingDrafts();
@@ -2221,15 +2214,6 @@ export default function App() {
                   {id === "threads" && needsReviewCount > 0 && (
                     <span className="nav-count">{needsReviewCount}</span>
                   )}
-                  {id === "outbox" &&
-                    outboxSummary &&
-                    outboxSummary.queued + outboxSummary.sending + outboxSummary.failed > 0 && (
-                      <span className="nav-count">
-                        {outboxSummary.failed > 0
-                          ? outboxSummary.failed
-                          : outboxSummary.queued + outboxSummary.sending}
-                      </span>
-                    )}
                 </button>
               ))}
             </div>
@@ -2318,8 +2302,9 @@ export default function App() {
               onApproveDraft={(p) => void approveDraft(p)}
               onEditDraft={(p) => void editDraft(p)}
               onDiscardDraft={(p) => void discardDraft(p)}
-              onRetryOutbox={(id) => void onRetry(id).then(() => refreshGlobalOutbox())}
-              onDiscardOutbox={(id) => void onDeleteOutbox(id).then(() => refreshGlobalOutbox())}
+              onRefresh={refreshGlobalOutbox}
+              onRetryOutbox={onRetry}
+              onDiscardOutbox={onDeleteOutbox}
               onOpenThread={(threadId) => {
                 setSelectedId(threadId);
                 setPanel("threads");
@@ -2828,23 +2813,6 @@ export default function App() {
         />
       )}
 
-      {panel === "outbox" && (
-        <OutboxScreen
-          items={globalOutbox}
-          summary={outboxSummary}
-          contacts={contacts}
-          groups={groups}
-          customers={customers}
-          onRefresh={refreshGlobalOutbox}
-          onRetry={onRetry}
-          onDelete={onDeleteOutbox}
-          onOpenThread={(threadId) => {
-            setSelectedId(threadId);
-            setPanel("threads");
-          }}
-        />
-      )}
-
       {panel === "audit" && (
         <AuditScreen
           autoReply={audit}
@@ -2970,8 +2938,7 @@ export default function App() {
         panel === "catalog" ||
         panel === "orders" ||
         panel === "sales" ||
-        panel === "search" ||
-        panel === "outbox") ? null : (
+        panel === "search") ? null : (
       <main className="convo">
         {!selectedId ? (
           <PageDashboard
@@ -2979,7 +2946,10 @@ export default function App() {
               {
                 messages: messagesDashboard(threads, outboxSummary, contacts, groups, {
                   openThread: (id) => setSelectedId(id),
-                  goOutbox: () => setPanel("outbox"),
+                  goNeedsReview: () => {
+                    setPanel("threads");
+                    setNeedsReviewMode(true);
+                  },
                   goNewMessage: () => setNewDmOpen(true),
                 }),
                 catalog: catalogDashboard(products, orders, {

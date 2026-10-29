@@ -176,16 +176,6 @@ export function IconSettings(p: SvgProps) {
   );
 }
 
-export function IconOutbox(p: SvgProps) {
-  return (
-    <IconShell {...p}>
-      <path d="M4 9h9 M4 13h9 M4 17h5" />
-      <path d="M18 19 V8" />
-      <path d="M14.5 11.5 L18 8 L21.5 11.5" />
-    </IconShell>
-  );
-}
-
 export function IconImage(p: SvgProps) {
   return (
     <IconShell {...p}>
